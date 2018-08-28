@@ -1,5 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs               #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE RankNTypes                 #-}
 
 -- | Some utilities for working with acid-state
@@ -12,7 +13,10 @@ module Cardano.Wallet.Kernel.DB.Util.AcidState (
   , runUpdateDiscardSnapshot
   , runUpdate_
   , runUpdateNoErrors
-    -- * Queries
+  , runUpdateDiscardSnapshot
+  , mapUpdateErrors
+  , discardUpdateErrors
+    -- * Queries (to be run on a snapshot)
   , Query' -- opaque
   , mapQueryErrors
   , localQuery
@@ -66,6 +70,21 @@ instance Z.Zoomable (Update' e) where
 mapUpdateErrors :: (e -> e') -> Update' e st a -> Update' e' st a
 mapUpdateErrors f (Update' upd) = Update' $
     strictStateT $ withExcept f . runStrictStateT upd
+
+discardUpdateErrors :: Update' st e a -> Update' st e' ()
+discardUpdateErrors (Update' upd) = Update' $
+    strictStateT $ \s -> ExceptT $ do
+        runExceptT (runStrictStateT (void upd) s) <&> \case
+            Left  _       -> return ((), s)
+            Right (_, s') -> return ((), s')
+
+-- | Like \"runUpdate'\", but it discards the DB after running the query.
+-- Use this function sparingly only when you are sure you won't need the
+-- DB snapshot afterwards. If you really want to re-access the DB
+-- after you ran an 'Update', it means the function you need is \"runUpdate'\".
+runUpdateDiscardSnapshot :: forall e st a. Update' st e a
+                         -> Update st (Either e a)
+runUpdateDiscardSnapshot upd = fmap snd <$> runUpdate' upd
 
 {-------------------------------------------------------------------------------
   Queries

@@ -496,10 +496,11 @@ restoreHdWallet :: HdRoot
                 -> Map HdAccountId (Utxo, Utxo, [AddrWithId])
                 -- ^ Current and genesis UTxO per account
                 -> Update DB (Either HD.CreateHdRootError ())
-restoreHdWallet newRoot defaultHdAccountId defaultHdAddress utxoByAccount =
-    runUpdateDiscardSnapshot . zoom dbHdWallets $ do
-      HD.createHdRoot newRoot
-      updateAccounts_ $ map mkUpdate (Map.toList (insertDefault utxoByAccount))
+restoreHdWallet newRoot utxoByAccount =
+    runUpdateDiscardSnapshot $ do
+      zoom dbHdWallets $ do
+          recreateHdRoot newRoot
+          updateAccounts_ $ map mkUpdate (Map.toList utxoByAccount)
   where
     mkUpdate :: (HdAccountId, (Utxo, Utxo, [AddrWithId]))
              -> AccountUpdate HD.CreateHdRootError ()
@@ -662,6 +663,13 @@ deleteHdRoot rootId = runUpdateDiscardSnapshot . zoom dbHdWallets $
 deleteHdAccount :: HdAccountId -> Update DB (Either UnknownHdAccount ())
 deleteHdAccount accId = runUpdateDiscardSnapshot . zoom dbHdWallets $
     HD.deleteHdAccount accId
+
+recreateHdRoot :: HdRoot -> Update' HdWallets HD.CreateHdRootError ()
+recreateHdRoot hdRoot = do
+    -- Delete the wallet, if it exists.
+    discardUpdateErrors (HD.deleteHdRoot (hdRoot ^. hdRootId))
+    -- Now create it again.
+    HD.createHdRoot hdRoot
 
 {-------------------------------------------------------------------------------
   DB cleaning
