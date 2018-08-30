@@ -1,5 +1,8 @@
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE StandaloneDeriving         #-}
 -- TODO: Not sure about the best way to avoid the orphan instances here
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
@@ -92,6 +95,7 @@ import           Universum hiding ((:|))
 
 import           Control.Lens (at, (+~), _Wrapped)
 import           Control.Lens.TH (makeLenses)
+import           Data.Aeson (FromJSON (..), ToJSON (..))
 import qualified Data.ByteString as BS
 import qualified Data.IxSet.Typed as IxSet (Indexable (..))
 import           Data.SafeCopy (base, deriveSafeCopy)
@@ -133,7 +137,10 @@ newtype AccountName = AccountName { getAccountName :: Text }
 
 -- | Account index
 newtype HdAccountIx = HdAccountIx { getHdAccountIx :: Word32 }
-  deriving (Eq, Ord)
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON HdAccountIx
+instance FromJSON HdAccountIx
 
 -- NOTE(adn) if we need to generate only @hardened@ account indexes, we
 -- need to extend this arbitrary instance accordingly.
@@ -142,7 +149,10 @@ instance Arbitrary HdAccountIx where
 
 -- | Address index
 newtype HdAddressIx = HdAddressIx { getHdAddressIx :: Word32 }
-  deriving (Eq, Ord)
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON HdAddressIx
+instance FromJSON HdAddressIx
 
 instance Arbitrary HdAddressIx where
     arbitrary = HdAddressIx <$> arbitrary
@@ -225,8 +235,7 @@ eskToHdRootId = HdRootId . InDb . Core.makePubKeyAddressBoot . Core.encToPublic
 -- as a primary key. This however is a slightly larger refactoring we don't
 -- currently have time for.
 newtype HdRootId = HdRootId { getHdRootId :: InDb Core.Address }
-  deriving (Eq, Ord, Show)
-
+  deriving (Generic, Eq, Ord, Show)
 
 instance Arbitrary HdRootId where
   arbitrary = do
@@ -234,12 +243,15 @@ instance Arbitrary HdRootId where
                                                <*> pure mempty
       pure (eskToHdRootId esk)
 
+instance ToJSON HdRootId
+instance FromJSON HdRootId
+
 -- | HD wallet account ID
 data HdAccountId = HdAccountId {
       _hdAccountIdParent :: !HdRootId
     , _hdAccountIdIx     :: !HdAccountIx
     }
-  deriving (Eq)
+  deriving (Generic, Eq, Show)
 
 -- | We make sure to compare the account index first to avoid doing an
 -- unnecessary comparison of the root ID
@@ -251,12 +263,18 @@ instance Ord HdAccountId where
 instance Arbitrary HdAccountId where
   arbitrary = HdAccountId <$> arbitrary <*> arbitrary
 
+instance ToJSON HdAccountId
+instance FromJSON HdAccountId
+
 -- | HD wallet address ID
 data HdAddressId = HdAddressId {
       _hdAddressIdParent :: !HdAccountId
     , _hdAddressIdIx     :: !HdAddressIx
     }
-  deriving Eq
+  deriving (Generic, Eq)
+
+instance ToJSON HdAddressId
+instance FromJSON HdAddressId
 
 -- | We make sure to compare the address index first to avoid doing an
 -- unnecessary comparison of the account ID
@@ -472,7 +490,12 @@ hdAccountStateCurrent f (HdAccountStateIncomplete st) =
 data UnknownHdRoot =
     -- | Unknown root ID
     UnknownHdRoot HdRootId
-    deriving Eq
+    deriving (Generic, Eq, Show)
+
+deriving newtype instance ToJSON (V1 UnknownHdRoot)
+deriving newtype instance FromJSON (V1 UnknownHdRoot)
+instance ToJSON UnknownHdRoot
+instance FromJSON UnknownHdRoot
 
 instance Arbitrary UnknownHdRoot where
     arbitrary = oneof [ UnknownHdRoot <$> arbitrary
@@ -485,12 +508,18 @@ data UnknownHdAccount =
 
     -- | Unknown account (implies the root is known)
   | UnknownHdAccount HdAccountId
-  deriving Eq
+  deriving (Generic, Eq, Show)
+
 
 instance Arbitrary UnknownHdAccount where
     arbitrary = oneof [ UnknownHdAccountRoot <$> arbitrary
                       , UnknownHdAccount <$> arbitrary
                       ]
+
+deriving newtype instance ToJSON (V1 UnknownHdAccount)
+deriving newtype instance FromJSON (V1 UnknownHdAccount)
+instance ToJSON UnknownHdAccount
+instance FromJSON UnknownHdAccount
 
 -- | Unknown address
 data UnknownHdAddress =
