@@ -16418,7 +16418,6 @@ license = stdenv.lib.licenses.mit;
 , formatting
 , hspec
 , lens
-, log-warper
 , monad-control
 , MonadRandom
 , optparse-applicative
@@ -16547,7 +16546,6 @@ cardano-sl-crypto
 cardano-sl-db
 cardano-sl-util
 criterion
-log-warper
 MonadRandom
 QuickCheck
 random
@@ -17242,10 +17240,10 @@ license = stdenv.lib.licenses.mit;
 , hspec
 , katip
 , lens
-, log-warper
 , lrucache
 , megaparsec
 , mmorph
+, monad-control
 , mtl
 , optparse-applicative
 , parsec
@@ -17265,6 +17263,7 @@ license = stdenv.lib.licenses.mit;
 , time
 , time-units
 , transformers
+, transformers-base
 , transformers-lift
 , universum
 , unliftio-core
@@ -17303,10 +17302,10 @@ formatting
 hashable
 katip
 lens
-log-warper
 lrucache
 megaparsec
 mmorph
+monad-control
 mtl
 optparse-applicative
 parsec
@@ -17322,6 +17321,7 @@ text
 time
 time-units
 transformers
+transformers-base
 transformers-lift
 universum
 unliftio-core
