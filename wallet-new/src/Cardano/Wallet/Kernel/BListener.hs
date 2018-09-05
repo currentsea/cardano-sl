@@ -135,6 +135,7 @@ applyBlock pw@PassiveWallet{..} b = do
       applyOneBlock :: Node.SecurityParameter -> ResolvedBlock -> ExceptT ApplyBlockFailed IO ()
       applyOneBlock k b' = ExceptT $ do
           ((ctxt, blocksByAccount), metas) <- prefilterBlock' pw b'
+          -- apply block to all Accounts in all Wallets
           mConfirmed <- update' _wallets $ ApplyBlock k ctxt blocksByAccount
           case mConfirmed of
               Left  err -> return (Left err)
