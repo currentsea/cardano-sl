@@ -150,7 +150,7 @@ beginRestoration pw wId prefilter root (tgtTip, tgtSlot) restart = do
 
     let restoreInfo = WalletRestorationInfo
                       { _wriProgress = readIORef progress
-                      , _wriCancel   = tryTakeMVar theTask >>= (`whenJust` cancel)
+                      , _wriCancel   = readMVar theTask >>= (`whenJust` cancel)
                       , _wriPrepare  = return M.empty
                       , _wriRestart  = restart
                       }
