@@ -28,6 +28,7 @@ import           Cardano.Wallet.Kernel.DB.AcidState (ApplyHistoricalBlock (..),
 import           Cardano.Wallet.Kernel.DB.BlockContext
 import qualified Cardano.Wallet.Kernel.DB.HdWallet as HD
 import           Cardano.Wallet.Kernel.DB.HdWallet.Create (CreateHdRootError)
+import           Cardano.Wallet.Kernel.DB.InDb (fromDb)
 import qualified Cardano.Wallet.Kernel.DB.Spec.Update as Spec
 import           Cardano.Wallet.Kernel.DB.TxMeta.Types
 import           Cardano.Wallet.Kernel.Decrypt (WalletDecrCredentialsKey (..),
@@ -47,12 +48,9 @@ import           Cardano.Wallet.Kernel.Types (WalletId (..))
 import           Cardano.Wallet.Kernel.Util.Core (utxoBalance)
 import           Cardano.Wallet.Kernel.Wallets (createWalletHdRnd)
 
-import           Pos.Chain.Block (Block, Blund, HeaderHash, MainBlock, Undo,
-                     headerHash, mainBlockSlot)
-import           Pos.Chain.Txp (TxIn (..), TxOut (..), TxOutAux (..), Utxo,
-                     genesisUtxo)
-import           Pos.Core as Core (Address, BlockCount (..), Coin, Config (..),
-                     GenesisHash, SlotId, flattenSlotId, mkCoin,
+import           Pos.Chain.Block (Block, Blund, HeaderHash, Undo, mainBlockSlot)
+import           Pos.Chain.Txp (GenesisUtxo (..), Utxo, genesisUtxo)
+import           Pos.Core (BlockCount (..), Coin, SlotId, flattenSlotId, mkCoin,
                      unsafeIntegerToCoin)
 import           Pos.Crypto (EncryptedSecretKey)
 import           Pos.DB.Block (getFirstGenesisBlockHash, getUndo,
@@ -101,7 +99,7 @@ restoreWallet pw hasSpendingPassword defaultCardanoAddress name assurance esk pr
           -- Create the wallet for restoration, deleting the wallet first if it
           -- already exists.
           mRoot <- createWalletHdRnd pw spendingPass name assurance esk $ \root ->
-               Right $ RestoreHdWallet root utxos
+               Right $ RestoreHdWallet root tgt utxos
           case mRoot of
               Left  err  -> return (Left err)
               Right root -> do
@@ -134,10 +132,13 @@ beginRestoration  :: Kernel.PassiveWallet
                   -> WalletId
                   -> (Blund -> IO (Map HD.HdAccountId PrefilteredBlock, [TxMeta]))
                   -> HD.HdRoot
-                  -> (HeaderHash, SlotId)
+                  -> BlockContext
                   -> IO ()
                   -> IO ()
-beginRestoration pw wId prefilter root (tgtTip, tgtSlot) restart = do
+beginRestoration pw wId prefilter root tgt restart = do
+
+    let tgtTip  = tgt ^. bcHash   . fromDb
+        tgtSlot = tgt ^. bcSlotId . fromDb
 
     -- Set the wallet's restoration information
     slotCount <- getSlotCount (pw ^. walletNode)
@@ -150,7 +151,7 @@ beginRestoration pw wId prefilter root (tgtTip, tgtSlot) restart = do
 
     let restoreInfo = WalletRestorationInfo
                       { _wriProgress = readIORef progress
-                      , _wriCancel   = readMVar theTask >>= (`whenJust` cancel)
+                      , _wriCancel   = readMVar theTask >>= cancel
                       , _wriPrepare  = return M.empty
                       , _wriRestart  = restart
                       }
@@ -188,7 +189,7 @@ data WalletInitInfo =
     -- about the most recent main block on the chain.
   | WalletRestore
       (Map HD.HdAccountId (Utxo, Utxo, [AddrWithId]))
-      (HeaderHash, SlotId)
+      BlockContext
 
 -- | Query the underlying node for the info we need to restore a wallet
 --
@@ -215,12 +216,11 @@ getWalletInitInfo coreConfig wKey@(wId, wdc) lock = do
 
     -- Get the tip
     mTip <- mostRecentMainBlock (configGenesisHash coreConfig) tipHeader
-    return $ case mTip of
-      Nothing  -> WalletCreate genUtxo
-      Just tip -> WalletRestore (mergeInfo curUtxo genUtxo) (tipInfo tip)
+    case mTip of
+      Nothing  -> return (WalletCreate genUtxo)
+      Just tip -> WalletRestore (mergeInfo curUtxo genUtxo) <$> mainBlockContext (tipInfo tip)
+
   where
-    tipInfo :: MainBlock -> (HeaderHash, SlotId)
-    tipInfo mb = (headerHash mb, mb ^. mainBlockSlot)
 
     mergeInfo :: (Monoid cur, Monoid gen)
               => Map HD.HdAccountId (cur, [AddrWithId])

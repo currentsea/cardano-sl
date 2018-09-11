@@ -179,15 +179,15 @@ makeLenses ''PartialCheckpoint
 -- block metadata of this initial partial checkpoint is not used.
 --
 -- See also 'finishRestoration'.
-initPartialCheckpoint :: Core.Utxo -> PartialCheckpoint
-initPartialCheckpoint utxo = PartialCheckpoint {
+initPartialCheckpoint :: BlockContext -> Core.Utxo -> PartialCheckpoint
+initPartialCheckpoint ctx utxo = PartialCheckpoint {
       _pcheckpointUtxo        = InDb $ utxo
     , _pcheckpointUtxoBalance = InDb $ Core.unsafeIntegerToCoin $
                                          Core.utxoBalance utxo
     , _pcheckpointPending     = Pending.empty
     , _pcheckpointForeign     = Pending.empty
     , _pcheckpointBlockMeta   = LocalBlockMeta emptyBlockMeta
-    , _pcheckpointContext     = Nothing
+    , _pcheckpointContext     = Just ctx
     }
 
 -- | A full check point can be " downcast " to a partial checkpoint by

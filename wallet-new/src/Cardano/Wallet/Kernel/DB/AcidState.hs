@@ -314,7 +314,7 @@ applyHistoricalBlock k context blocks =
     mkUpdate (accId, mPB) = AccountUpdate {
           accountUpdateId    = accId
         , accountUpdateAddrs = pfbAddrs pb
-        , accountUpdateNew   = AccountUpdateNewIncomplete mempty mempty
+        , accountUpdateNew   = AccountUpdateNewIncomplete mempty mempty context
         , accountUpdate      = void $ Z.wrap $ \acc -> do
             -- Under normal circumstances we should not encounter an account
             -- that is in UpToDate state during restoration. There is only one
@@ -383,8 +383,9 @@ switchToFork :: SecurityParameter
              -> Map HdAccountId HdAccountState
              -> Update DB (Either SwitchToForkInternalError
                                   (Map HdAccountId (Pending, Set TxId)))
-switchToFork k n blocks _acctStates = runUpdateDiscardSnapshot $ zoom dbHdWallets $
-    updateAccounts =<< mkUpdates <$> use hdWalletsAccounts
+switchToFork k n blocks _acctStates =
+    runUpdateDiscardSnapshot $ zoom dbHdWallets $
+      updateAccounts =<< mkUpdates <$> use hdWalletsAccounts
   where
     mkUpdates :: IxSet HdAccount
               -> [AccountUpdate SwitchToForkInternalError (Pending, Set TxId)]
@@ -506,10 +507,12 @@ restoreHdWallet :: HdRoot
                 -- 'HdAccount'.
                 -> HdAddress
                 -- ^ The default HdAddress to go with this HdRoot
+                -> BlockContext
+                -- ^ The initial block context for restorations
                 -> Map HdAccountId (Utxo, Utxo, [AddrWithId])
                 -- ^ Current and genesis UTxO per account
                 -> Update DB (Either HD.CreateHdRootError ())
-restoreHdWallet newRoot utxoByAccount =
+restoreHdWallet newRoot ctx utxoByAccount =
     runUpdateDiscardSnapshot $ do
       zoom dbHdWallets $ do
           recreateHdRoot newRoot
@@ -519,7 +522,7 @@ restoreHdWallet newRoot utxoByAccount =
              -> AccountUpdate HD.CreateHdRootError ()
     mkUpdate (accId, (curUtxo, genUtxo, addrs)) = AccountUpdate {
           accountUpdateId    = accId
-        , accountUpdateNew   = AccountUpdateNewIncomplete curUtxo genUtxo
+        , accountUpdateNew   = AccountUpdateNewIncomplete curUtxo genUtxo ctx
         , accountUpdateAddrs = addrs
         , accountUpdate      = return () -- Create it only
         }
@@ -589,7 +592,8 @@ data AccountUpdateNew =
     --
     -- * The current UTxO (obtained by filtering the full node's current UTxO)
     -- * The genesis UTxO (obtained by filtering 'genesisUtxo')
-  | AccountUpdateNewIncomplete !Utxo !Utxo
+    -- * The block context to use for the first partial checkpoint.
+  | AccountUpdateNewIncomplete !Utxo !Utxo !BlockContext
 
 -- | Brand new account (if one needs to be created)
 accountUpdateCreate :: HdAccountId -> AccountUpdateNew -> HdAccount
@@ -600,13 +604,13 @@ accountUpdateCreate accId (AccountUpdateNewUpToDate utxo) =
     initState = HdAccountStateUpToDate HdAccountUpToDate {
           _hdUpToDateCheckpoints = Checkpoints $ one $ initCheckpoint utxo
         }
-accountUpdateCreate accId (AccountUpdateNewIncomplete curUtxo genUtxo) =
+accountUpdateCreate accId (AccountUpdateNewIncomplete curUtxo genUtxo ctx) =
     HD.initHdAccount accId initState
   where
     initState :: HdAccountState
     initState = HdAccountStateIncomplete HdAccountIncomplete {
-          _hdIncompleteCurrent    = Checkpoints $ one $ initPartialCheckpoint curUtxo
-        , _hdIncompleteHistorical = Checkpoints $ one $ initCheckpoint        genUtxo
+          _hdIncompleteCurrent    = one $ initPartialCheckpoint ctx curUtxo
+        , _hdIncompleteHistorical = one $ initCheckpoint        genUtxo
         }
 
 updateAccount :: AccountUpdate e a -> Update' e HdWallets (HdAccountId, a)
