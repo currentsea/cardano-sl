@@ -52,7 +52,7 @@ bracketPassiveWallet mode logFunction keystore node f = do
                     let mp = catMaybes ls
                     -- TODO: Deal with ApplyBlockFailed
                     mapM_ (Kernel.applyBlock w) mp
-                 , Actions.switchToFork = \_ _ ->
+                 , Actions.switchToFork = \_ _ _ ->
                      logFunction Debug "<switchToFork>"
                  , Actions.emit = logFunction Debug }
       Actions.withWalletWorker wai $ \invoke -> do

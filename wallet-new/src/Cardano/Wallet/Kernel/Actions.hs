@@ -20,6 +20,7 @@ import qualified Control.Concurrent.STM as STM
 import qualified Control.Exception.Safe as Ex
 import           Control.Lens (makeLenses, (%=), (+=), (-=), (.=))
 import           Control.Monad.Writer.Strict (Writer, runWriter, tell)
+import qualified Data.List.NonEmpty as NE
 import           Formatting (bprint, build, shown, (%))
 import qualified Formatting.Buildable
 import           Universum
@@ -45,7 +46,7 @@ data WalletAction b
 --   underlying wallet.
 data WalletActionInterp m b = WalletActionInterp
     { applyBlocks  :: OldestFirst NE b -> m ()
-    , switchToFork :: Int -> OldestFirst [] b -> m ()
+    , switchToFork :: b -> Int -> OldestFirst [] b -> m ()
     , emit         :: Text -> m ()
     }
 
@@ -62,6 +63,7 @@ data WalletWorkerState b = WalletWorkerState
     { _pendingRollbacks    :: !Int
     , _pendingBlocks       :: !(NewestFirst [] b)
     , _lengthPendingBlocks :: !Int
+    , _currentTip          :: !(Maybe b)
     }
   deriving Eq
 
@@ -71,7 +73,7 @@ makeLenses ''WalletWorkerState
 lifted :: (Monad m, MonadTrans t) => WalletActionInterp m b -> WalletActionInterp (t m) b
 lifted i = WalletActionInterp
     { applyBlocks  = lift . applyBlocks i
-    , switchToFork = \n bs -> lift (switchToFork i n bs)
+    , switchToFork = \tip n bs -> lift (switchToFork i tip n bs)
     , emit         = lift . emit i
     }
 
@@ -91,6 +93,7 @@ interp walletInterp action = do
       ApplyBlocks bs | numPendingRollbacks == 0 -> do
                          emit "applying some blocks (non-rollback)"
                          applyBlocks bs
+                         currentTip .= Just (NE.head (getNewestFirst $ toNewestFirst bs))
 
       -- Otherwise, add the blocks to the pending list. If the resulting
       -- list of pending blocks is longer than the number of pending rollbacks,
@@ -105,13 +108,18 @@ interp walletInterp action = do
         -- If we have seen more blocks than rollbacks, switch to the new fork.
         when (numPendingBlocks + length bs > numPendingRollbacks) $ do
 
-          pb <- toOldestFirst <$> use pendingBlocks
-          switchToFork numPendingRollbacks pb
+          pb <- use pendingBlocks
+          let newTip = case pb of
+                  NewestFirst (tip : _) -> tip
+                  _                     -> error "Invariant violation, no pending blocks!"
+
+          switchToFork newTip numPendingRollbacks (toOldestFirst pb)
 
           -- Reset state to "no fork in progress"
           pendingRollbacks    .= 0
           lengthPendingBlocks .= 0
           pendingBlocks       .= NewestFirst []
+          currentTip          .= Just newTip
 
       -- If we are in the midst of a fork and have seen some new blocks,
       -- roll back some of those blocks. If there are more rollbacks requested
@@ -166,9 +174,9 @@ interpStep act st = runWriter (execStateT (interp wai act) st)
     -- and anyway only use this in testing.
     wai :: WalletActionInterp (Writer [WalletInterpAction b]) b
     wai = WalletActionInterp {
-          applyBlocks  = \bs   -> tell [InterpApplyBlocks bs]
-        , switchToFork = \n bs -> tell [InterpSwitchToFork n bs]
-        , emit         = \msg  -> tell [InterpLogMessage msg]
+          applyBlocks  = \bs     -> tell [InterpApplyBlocks bs]
+        , switchToFork = \_ n bs -> tell [InterpSwitchToFork n bs]
+        , emit         = \msg    -> tell [InterpLogMessage msg]
         }
 
 initialWorkerState :: WalletWorkerState b
@@ -176,6 +184,7 @@ initialWorkerState = WalletWorkerState
     { _pendingRollbacks    = 0
     , _pendingBlocks       = NewestFirst []
     , _lengthPendingBlocks = 0
+    , _currentTip          = Nothing
     }
 
 -- | Thrown by 'withWalletWorker''s continuation in case it's used outside of
@@ -245,11 +254,13 @@ instance Show b => Buildable (WalletWorkerState b) where
       % "{ _pendingRollbacks:    " % shown
       % ", _pendingBlocks:       " % shown
       % ", _lengthPendingBlocks: " % shown
+      % ", _currentTip:          " % shown
       % " }"
       )
       _pendingRollbacks
       _pendingBlocks
       _lengthPendingBlocks
+      _currentTip
 
 instance Show b => Buildable (WalletAction b) where
     build wa = case wa of
