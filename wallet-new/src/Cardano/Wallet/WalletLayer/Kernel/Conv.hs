@@ -146,7 +146,7 @@ toAccount snapshot account = V1.Account {
     }
   where
     -- NOTE(adn): Perhaps we want the minimum or expected balance here?
-    accountAvailableBalance = cpAvailableBalance (account ^. HD.hdAccountState . HD.hdAccountStateCurrent)
+    accountAvailableBalance = account ^. HD.hdAccountState . HD.hdAccountStateCurrent (to cpAvailableBalance)
     hdAccountId  = account ^. HD.hdAccountId
     accountIndex = toAccountId (account ^. HD.hdAccountId)
     hdAddresses  = Kernel.addressesByAccountId snapshot hdAccountId
@@ -195,7 +195,7 @@ toAddress acc hdAddress =
                      (addressMeta ^. addressMetaIsChange)
   where
     cardanoAddress = hdAddress ^. HD.hdAddressAddress . fromDb
-    addressMeta    = acc ^. HD.hdAccountState . HD.hdAccountStateCurrent . cpAddressMeta cardanoAddress
+    addressMeta    = acc ^. HD.hdAccountState . HD.hdAccountStateCurrent (cpAddressMeta cardanoAddress)
 
 -- | Converts a Kernel 'HdAddress' into a Cardano 'Address'.
 toCardanoAddress :: HD.HdAddress -> Address

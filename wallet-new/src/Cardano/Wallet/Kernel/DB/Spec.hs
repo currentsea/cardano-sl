@@ -160,7 +160,7 @@ data PartialCheckpoint = PartialCheckpoint {
     , _pcheckpointPending     :: !Pending
     , _pcheckpointBlockMeta   :: !LocalBlockMeta
     , _pcheckpointForeign     :: !Pending
-    , _pcheckpointContext     :: !(Maybe BlockContext)
+    , _pcheckpointContext     :: !BlockContext
     } deriving Eq
 
 makeLenses ''PartialCheckpoint
@@ -187,36 +187,19 @@ initPartialCheckpoint ctx utxo = PartialCheckpoint {
     , _pcheckpointPending     = Pending.empty
     , _pcheckpointForeign     = Pending.empty
     , _pcheckpointBlockMeta   = LocalBlockMeta emptyBlockMeta
-    , _pcheckpointContext     = Just ctx
+    , _pcheckpointContext     = ctx
     }
 
--- | A full check point can be " downcast " to a partial checkpoint by
--- forgetting that we have complete block metadata.
---
--- We /could/ define this as an 'Iso', but prefer to define it as a 'Lens'
--- to emphasize that a partial checkpoint records less information than a
--- full checkpoint.
-fromFullCheckpoint :: Lens' Checkpoint PartialCheckpoint
-fromFullCheckpoint f cp = inj <$> f (proj cp)
-  where
-    proj :: Checkpoint -> PartialCheckpoint
-    proj Checkpoint{..} = PartialCheckpoint {
+-- | A full check point with a non-Nothing context can be " downcast " to a
+-- partial checkpoint by forgetting that we have complete block metadata.
+fromFullCheckpoint :: Checkpoint -> Maybe PartialCheckpoint
+fromFullCheckpoint Checkpoint{..} = _checkpointContext <&> \ctx -> PartialCheckpoint {
           _pcheckpointUtxo        =        _checkpointUtxo
         , _pcheckpointUtxoBalance =        _checkpointUtxoBalance
         , _pcheckpointPending     =        _checkpointPending
         , _pcheckpointBlockMeta   = coerce _checkpointBlockMeta
         , _pcheckpointForeign     =        _checkpointForeign
-        , _pcheckpointContext     =        _checkpointContext
-        }
-
-    inj :: PartialCheckpoint -> Checkpoint
-    inj PartialCheckpoint{..} = Checkpoint{
-          _checkpointUtxo        =        _pcheckpointUtxo
-        , _checkpointUtxoBalance =        _pcheckpointUtxoBalance
-        , _checkpointPending     =        _pcheckpointPending
-        , _checkpointBlockMeta   = coerce _pcheckpointBlockMeta
-        , _checkpointForeign     =        _pcheckpointForeign
-        , _checkpointContext     =        _pcheckpointContext
+        , _pcheckpointContext     =        ctx
         }
 
 -- | Construct a full checkpoint from a partial checkpoint and the block meta
@@ -227,7 +210,7 @@ toFullCheckpoint prevBlockMeta PartialCheckpoint{..} = Checkpoint {
     , _checkpointUtxoBalance =          _pcheckpointUtxoBalance
     , _checkpointPending     =          _pcheckpointPending
     , _checkpointBlockMeta   = withPrev _pcheckpointBlockMeta
-    , _checkpointContext     =          _pcheckpointContext
+    , _checkpointContext     =     Just _pcheckpointContext
     , _checkpointForeign     =          _pcheckpointForeign
     }
   where
@@ -329,7 +312,7 @@ class IsCheckpoint c where
     cpPending     :: Lens' c Pending
     cpBlockMeta   :: Lens' c LocalBlockMeta
     cpForeign     :: Lens' c Pending
-    cpContext     :: Lens' c (Maybe BlockContext)
+    cpContext     :: Getter c (Maybe BlockContext)
 
 instance IsCheckpoint Checkpoint where
     cpUtxo        = checkpointUtxo . fromDb
@@ -345,7 +328,7 @@ instance IsCheckpoint PartialCheckpoint where
     cpPending     = pcheckpointPending
     cpBlockMeta   = pcheckpointBlockMeta
     cpForeign     = pcheckpointForeign
-    cpContext     = pcheckpointContext
+    cpContext     = pcheckpointContext . to Just
 
 instance Differentiable Checkpoint DeltaCheckpoint where
     findDelta = findDeltaCheckpoint
@@ -418,7 +401,7 @@ currentUtxoBalance :: IsCheckpoint c => Lens' (Checkpoints c) Core.Coin
 currentPending     :: IsCheckpoint c => Lens' (Checkpoints c) Pending
 currentBlockMeta   :: IsCheckpoint c => Lens' (Checkpoints c) LocalBlockMeta
 currentForeign     :: IsCheckpoint c => Lens' (Checkpoints c) Pending
-currentContext     :: IsCheckpoint c => Lens' (Checkpoints c) (Maybe BlockContext)
+currentContext     :: IsCheckpoint c => Getter (Checkpoints c) (Maybe BlockContext)
 
 currentUtxo        = currentCheckpoint . cpUtxo
 currentUtxoBalance = currentCheckpoint . cpUtxoBalance
