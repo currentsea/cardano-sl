@@ -181,10 +181,11 @@ applyBlock pw@PassiveWallet{..} b = do
 -- NOTE: The Ouroboros protocol says that this is only valid if the number of
 -- resolved blocks exceeds the length of blocks to roll back.
 switchToFork :: PassiveWallet
+             -> BlockContext    -- ^ The tip that we are switching away from.
              -> Int             -- ^ Number of blocks to roll back
              -> [ResolvedBlock] -- ^ Blocks in the new fork
              -> IO (Either SwitchToForkError ())
-switchToFork pw@PassiveWallet{..} n bs = do
+switchToFork pw@PassiveWallet{..} _oldTip n bs = do
     k <- Node.getSecurityParameter _walletNode
     blocksAndMeta <- mapM (prefilterBlock' pw) bs
     let (blockssByAccount, metas) = unzip blocksAndMeta

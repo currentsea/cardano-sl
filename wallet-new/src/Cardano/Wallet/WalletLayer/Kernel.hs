@@ -19,6 +19,7 @@ import           Pos.Util.Wlog (Severity (Debug))
 import qualified Cardano.Wallet.Kernel as Kernel
 import qualified Cardano.Wallet.Kernel.Actions as Actions
 import qualified Cardano.Wallet.Kernel.BListener as Kernel
+import           Cardano.Wallet.Kernel.DB.Resolved (rbContext)
 import           Cardano.Wallet.Kernel.Diffusion (WalletDiffusion (..))
 import           Cardano.Wallet.Kernel.Keystore (Keystore)
 import           Cardano.Wallet.Kernel.NodeStateAdaptor
@@ -52,8 +53,14 @@ bracketPassiveWallet mode logFunction keystore node f = do
                     let mp = catMaybes ls
                     -- TODO: Deal with ApplyBlockFailed
                     mapM_ (Kernel.applyBlock w) mp
-                 , Actions.switchToFork = \_ _ _ ->
-                     logFunction Debug "<switchToFork>"
+                 , Actions.switchToFork = \tipBlund n blunds -> do
+                     bs <- catMaybes <$> mapM (Wallets.blundToResolvedBlock node)
+                                              (getOldestFirst blunds)
+                     mTip <- Wallets.blundToResolvedBlock node tipBlund
+                     -- TODO: Deal with SwitchToForkError
+                     case mTip of
+                         Just tip -> void $ Kernel.switchToFork w (tip ^. rbContext) n bs
+                         Nothing  -> return ()
                  , Actions.emit = logFunction Debug }
       Actions.withWalletWorker wai $ \invoke -> do
          f (passiveWalletLayer w invoke) w
