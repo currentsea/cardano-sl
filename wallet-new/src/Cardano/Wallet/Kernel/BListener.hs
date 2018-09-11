@@ -126,7 +126,7 @@ applyBlock pw@PassiveWallet{..} b = do
           -- If we could not apply this block, it may be because the wallet has
           -- fallen behind the node and is missing blocks. Try to find and apply
           -- each of those blocks as well.
-          blocks <- backfill (Just curCtx) cpCtx []
+          blocks <- findMissing (Just curCtx) cpCtx []
           for_ (getOldestFirst blocks) (withExceptT convertError . applyOneBlock k)
 
   where
@@ -149,22 +149,21 @@ applyBlock pw@PassiveWallet{..} b = do
       convertError = \case
           ApplyBlockNotSuccessor curCtx cpCtx -> SuccessorChanged curCtx cpCtx
 
-      -- Backfill blocks that were missing between the given block and the wallet's most recent
-      -- checkpoint. 'backfill src tgt' will apply all blocks in order, starting from the
-      -- successor of tgt until src is reached. 'Nothing' is used to represent the genesis block.
-      backfill :: Maybe BlockContext
-               -> Maybe BlockContext
-               -> [ResolvedBlock]
-               -> ExceptT BackfillFailed IO (OldestFirst [] ResolvedBlock)
-      backfill Nothing    Nothing    acc = return (OldestFirst acc)
-      backfill Nothing    (Just cp) _acc = throwError (CouldNotReachCheckpoint cp)
-      backfill (Just cur) tgt        acc =
+      -- Find all blocks that were missing between the given block and the wallet's most recent
+      -- checkpoint. 'Nothing' is used to represent the genesis block.
+      findMissing :: Maybe BlockContext
+                  -> Maybe BlockContext
+                  -> [ResolvedBlock]
+                  -> ExceptT BackfillFailed IO (OldestFirst [] ResolvedBlock)
+      findMissing Nothing    Nothing    acc = return (OldestFirst acc)
+      findMissing Nothing    (Just cp) _acc = throwError (CouldNotReachCheckpoint cp)
+      findMissing (Just cur) tgt        acc =
         if (Just (cur ^. bcHash)) == (tgt ^? _Just . bcHash) then
             return (OldestFirst acc)
         else do
             rb   <- hashToBlock (cur ^. bcHash . fromDb)
             prev <- traverse hashToBlock (rb ^? rbContext . bcPrevMain . _Just . fromDb)
-            backfill (prev ^? _Just . rbContext) tgt (rb : acc)
+            findMissing (prev ^? _Just . rbContext) tgt (rb : acc)
 
       -- Find and resolve the block with a given hash.
       hashToBlock :: HeaderHash -> ExceptT BackfillFailed IO ResolvedBlock
