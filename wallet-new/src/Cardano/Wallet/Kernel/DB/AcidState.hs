@@ -335,7 +335,7 @@ applyHistoricalBlock k context blocks =
                       })
             case acc ^. hdAccountState of
               HdAccountStateUpToDate (HdAccountUpToDate upToDate) -> do
-                let current = liftCheckpoints (fmap (view fromFullCheckpoint)) upToDate
+                let current = liftCheckpoints (fmap (fromFullCheckpoint context)) upToDate
                     history = Checkpoints $ one $ initCheckpoint mempty
                 second (updateHistory current) $
                   Z.unwrap (Spec.applyBlock k pb) history
@@ -609,8 +609,8 @@ accountUpdateCreate accId (AccountUpdateNewIncomplete curUtxo genUtxo ctx) =
   where
     initState :: HdAccountState
     initState = HdAccountStateIncomplete HdAccountIncomplete {
-          _hdIncompleteCurrent    = one $ initPartialCheckpoint ctx curUtxo
-        , _hdIncompleteHistorical = one $ initCheckpoint        genUtxo
+          _hdIncompleteCurrent    = Checkpoints $ one $ initPartialCheckpoint ctx curUtxo
+        , _hdIncompleteHistorical = Checkpoints $ one $ initCheckpoint        genUtxo
         }
 
 updateAccount :: AccountUpdate e a -> Update' e HdWallets (HdAccountId, a)

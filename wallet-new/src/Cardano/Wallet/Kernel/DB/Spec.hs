@@ -192,14 +192,16 @@ initPartialCheckpoint ctx utxo = PartialCheckpoint {
 
 -- | A full check point with a non-Nothing context can be " downcast " to a
 -- partial checkpoint by forgetting that we have complete block metadata.
-fromFullCheckpoint :: Checkpoint -> Maybe PartialCheckpoint
-fromFullCheckpoint Checkpoint{..} = _checkpointContext <&> \ctx -> PartialCheckpoint {
+-- The provided 'BlockContext' will only be used when the full checkpoint's
+-- context was 'Nothing'.
+fromFullCheckpoint :: BlockContext -> Checkpoint -> PartialCheckpoint
+fromFullCheckpoint ctx Checkpoint{..} = PartialCheckpoint {
           _pcheckpointUtxo        =        _checkpointUtxo
         , _pcheckpointUtxoBalance =        _checkpointUtxoBalance
         , _pcheckpointPending     =        _checkpointPending
         , _pcheckpointBlockMeta   = coerce _checkpointBlockMeta
         , _pcheckpointForeign     =        _checkpointForeign
-        , _pcheckpointContext     =        ctx
+        , _pcheckpointContext     = fromMaybe ctx _checkpointContext
         }
 
 -- | Construct a full checkpoint from a partial checkpoint and the block meta
