@@ -81,6 +81,8 @@ import           Cardano.Wallet.Kernel.NodeStateAdaptor (SecurityParameter (..))
 import           Cardano.Wallet.Kernel.PrefilterTx (AddrWithId,
                      PrefilteredBlock (..), emptyPrefilteredBlock)
 import           Cardano.Wallet.Kernel.Util (markMissingMapEntries)
+import           Cardano.Wallet.Kernel.Util.NonEmptyMap (NonEmptyMap)
+import qualified Cardano.Wallet.Kernel.Util.NonEmptyMap as NEM
 import           Cardano.Wallet.Kernel.Util.StrictNonEmpty (StrictNonEmpty)
 import           Test.QuickCheck (Arbitrary (..), oneof)
 
@@ -248,16 +250,27 @@ cancelPending cancelled = void . runUpdate' . zoom dbHdWallets $
 --   need to push a new checkpoint.
 applyBlock :: SecurityParameter
            -> BlockContext
+           -> Maybe (Set HdAccountId)
            -> Map HdAccountId PrefilteredBlock
-           -> Update DB (Either Spec.ApplyBlockFailed (Map HdAccountId (Set TxId)))
-applyBlock k context blocks = runUpdateDiscardSnapshot $ zoom dbHdWallets $
-    updateAccounts =<< mkUpdates <$> use hdWalletsAccounts
+           -> Update DB (Either (NonEmptyMap HdAccountId Spec.ApplyBlockFailed) (Map HdAccountId (Set TxId)))
+applyBlock k context restriction blocks = runUpdateDiscardSnapshot $ do
+    -- Try to apply the block to each account in each wallet. If *any* have failed, throw the
+    -- list of *all* failures; otherwise, run the update.
+    let applyAll :: Update' DB Void (Map HdAccountId (Either Spec.ApplyBlockFailed (Set TxId)))
+        applyAll = zoom dbHdWallets $ updateAccounts =<< mkUpdates <$> use hdWalletsAccounts
+    (problems, successes) <- fmap (Map.mapEither id) (mapUpdateErrors absurd applyAll)
+    maybe (return successes) throwError (NEM.fromMap problems)
+
   where
+    acctFilter :: HdAccountId -> Bool
+    acctFilter = maybe (const True) (flip elem) restriction
+
     mkUpdates :: IxSet HdAccount
-              -> [AccountUpdate Spec.ApplyBlockFailed (Set TxId)]
+              -> [AccountUpdate Void (Either Spec.ApplyBlockFailed (Set TxId))]
     mkUpdates existingAccounts =
           map mkUpdate
         . Map.toList
+        . Map.filterWithKey (const . acctFilter)
         . markMissingMapEntries (IxSet.toMap existingAccounts)
         $ blocks
 
@@ -271,15 +284,15 @@ applyBlock k context blocks = runUpdateDiscardSnapshot $ zoom dbHdWallets $
     -- initial utxo for accounts discovered during 'applyBlock' (and
     -- 'switchToFork')
     mkUpdate :: (HdAccountId, Maybe PrefilteredBlock)
-             -> AccountUpdate Spec.ApplyBlockFailed (Set TxId)
+             -> AccountUpdate Void (Either Spec.ApplyBlockFailed (Set TxId))
     mkUpdate (accId, mPB) = AccountUpdate {
           accountUpdateId    = accId
         , accountUpdateAddrs = pfbAddrs pb
         , accountUpdateNew   = AccountUpdateNewUpToDate Map.empty
         , accountUpdate      =
             matchHdAccountCheckpoints
-              (Spec.applyBlock k      pb)
-              (Spec.applyBlockPartial pb)
+              (tryUpdate' $ Spec.applyBlock k      pb)
+              (tryUpdate' $ Spec.applyBlockPartial pb)
         }
       where
         pb :: PrefilteredBlock
@@ -378,12 +391,13 @@ restorationComplete k rootId = runUpdateNoErrors $ zoom dbHdWallets $
 -- TODO: We use a plain list here rather than 'OldestFirst' since the latter
 -- does not have a 'SafeCopy' instance.
 switchToFork :: SecurityParameter
+             -> BlockContext
              -> Int
              -> [(BlockContext, Map HdAccountId PrefilteredBlock)]
              -> Map HdAccountId HdAccountState
              -> Update DB (Either SwitchToForkInternalError
                                   (Map HdAccountId (Pending, Set TxId)))
-switchToFork k n blocks _acctStates =
+switchToFork k _oldTip n blocks _acctStates =
     runUpdateDiscardSnapshot $ zoom dbHdWallets $
       updateAccounts =<< mkUpdates <$> use hdWalletsAccounts
   where

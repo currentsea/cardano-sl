@@ -14,6 +14,7 @@ module Cardano.Wallet.Kernel.DB.Util.AcidState (
   , runUpdate_
   , runUpdateNoErrors
   , runUpdateDiscardSnapshot
+  , tryUpdate'
   , mapUpdateErrors
   , discardUpdateErrors
     -- * Queries (to be run on a snapshot)
@@ -47,6 +48,7 @@ import qualified Cardano.Wallet.Kernel.DB.Util.IxSet as IxSet
 import qualified Cardano.Wallet.Kernel.DB.Util.Zoomable as Z
 import           Cardano.Wallet.Kernel.Util (mustBeRight)
 import           Cardano.Wallet.Kernel.Util.StrictStateT
+import           Cardano.Wallet.Orphans ()
 
 {-------------------------------------------------------------------------------
   Acid-state updates
@@ -77,6 +79,15 @@ discardUpdateErrors (Update' upd) = Update' $
         runExceptT (runStrictStateT (void upd) s) <&> \case
             Left  _       -> return ((), s)
             Right (_, s') -> return ((), s')
+
+tryUpdate' :: forall st e a. Update' st e a -> Update' st Void (Either e a)
+tryUpdate' (Update' action) = do
+    state0 <- get
+    let convert :: Either e (a, st) -> Either Void (Either e a, st)
+        convert = Right . \case
+            Left  e           -> (Left  e, state0)
+            Right (x, state1) -> (Right x, state1)
+    Update' $ mapStrictStateT (mapExcept convert) action
 
 -- | Like \"runUpdate'\", but it discards the DB after running the query.
 -- Use this function sparingly only when you are sure you won't need the

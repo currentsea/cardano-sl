@@ -42,6 +42,7 @@ import           Cardano.Wallet.Kernel.PrefilterTx (PrefilteredBlock (..),
 import           Cardano.Wallet.Kernel.Read (getWalletCredentials)
 import qualified Cardano.Wallet.Kernel.Submission as Submission
 import           Cardano.Wallet.Kernel.Types (WalletId (..))
+import qualified Cardano.Wallet.Kernel.Util.NonEmptyMap as NEM
 import           Cardano.Wallet.WalletLayer.Kernel.Wallets
                      (blundToResolvedBlock)
 
@@ -120,25 +121,36 @@ applyBlock :: PassiveWallet
            -> IO (Either BackfillFailed ())
 applyBlock pw@PassiveWallet{..} b = do
     k <- Node.getSecurityParameter _walletNode
-    runExceptT (applyOneBlock k b) >>= \case
+    runExceptT (applyOneBlock k Nothing b) >>= \case
         Right () -> return (Right ())
         Left  (ApplyBlockNotSuccessor curCtx cpCtx) -> runExceptT $ do
-          -- If we could not apply this block, it may be because the wallet has
-          -- fallen behind the node and is missing blocks. Try to find and apply
-          -- each of those blocks as well.
+          -- If we could not apply this block, there are three possibilities:
+          --   1. The wallet worker has fallen behind the node and is missing blocks.
+          --      In this case, the wallet worker's tip is an ancestor of the block to
+          --      apply, and we should try to find and apply each of the missing blocks
+          --      so that the wallet catches up to the node.
+          --   2. An account's checkpoint is actually *ahead* of the wallet worker's tip.
+          --      This can happen if a restoration begins after the node sees a block,
+          --      but before the wallet worker has applied it. In this case, do nothing.
+          --   3. An account's checkpoint is incomparable with the wallet worker's tip.
+          --      This could happen because the account in on a different fork. In this
+          --      case, start a restoration on the account's wallet.
           blocks <- findMissing (Just curCtx) cpCtx []
-          for_ (getOldestFirst blocks) (withExceptT convertError . applyOneBlock k)
+          for_ (getOldestFirst blocks) (withExceptT convertError . applyOneBlock k Nothing)
 
   where
 
       -- Try to apply a single block, failing if it does not fit onto the most recent checkpoint.
-      applyOneBlock :: Node.SecurityParameter -> ResolvedBlock -> ExceptT ApplyBlockFailed IO ()
-      applyOneBlock k b' = ExceptT $ do
+      applyOneBlock :: Node.SecurityParameter
+                    -> Maybe (Set HdAccountId)
+                    -> ResolvedBlock
+                    -> ExceptT ApplyBlockFailed IO ()
+      applyOneBlock k accts b' = ExceptT $ do
           ((ctxt, blocksByAccount), metas) <- prefilterBlock' pw b'
           -- apply block to all Accounts in all Wallets
-          mConfirmed <- update' _wallets $ ApplyBlock k ctxt blocksByAccount
+          mConfirmed <- update' _wallets $ ApplyBlock k ctxt accts blocksByAccount
           case mConfirmed of
-              Left  err -> return (Left err)
+              Left  errs -> return . Left . snd . NEM.findMin $ errs
               Right confirmed -> do
                   modifyMVar_ _walletSubmission (return . Submission.remPending confirmed)
                   mapM_ (putTxMeta _walletMeta) metas
@@ -184,7 +196,7 @@ switchToFork :: PassiveWallet
              -> Int             -- ^ Number of blocks to roll back
              -> [ResolvedBlock] -- ^ Blocks in the new fork
              -> IO (Either SwitchToForkError ())
-switchToFork pw@PassiveWallet{..} _oldTip n bs = do
+switchToFork pw@PassiveWallet{..} oldTip n bs = do
     k <- Node.getSecurityParameter _walletNode
     blocksAndMeta <- mapM (prefilterBlock' pw) bs
     let (blockssByAccount, metas) = unzip blocksAndMeta
@@ -209,7 +221,7 @@ switchToFork pw@PassiveWallet{..} _oldTip n bs = do
         -- Stop the restorations and get the re-started account states that should be used.
         newAccts <- Map.unions <$> mapM prepareForRestoration restorations
         -- Switch to the fork, retrying if another restoration begins in the meantime.
-        update' _wallets (SwitchToFork k n blockssByAccount newAccts) >>= \case
+        update' _wallets (SwitchToFork k oldTip n blockssByAccount newAccts) >>= \case
             Left RollbackDuringRestoration      -> trySwitchingToFork k blockssByAccount
               -- ^ Some more accounts started restoring, try again.
             Left (ApplyBlockFailedInternal err) -> return $ Left (ApplyBlockFailed err)
