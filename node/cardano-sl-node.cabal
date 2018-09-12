@@ -70,11 +70,14 @@ test-suite property-tests
                        Translation
 
                        Chain.Abstract
+                       Chain.Abstract.FinitelySupportedFunction
+                       Chain.Abstract.Repartition
                        Chain.Abstract.Translate.FromUTxO
                        Chain.Abstract.Translate.ToCardano
                        Chain.Abstract.Translate.Policies
                        Chain.Policy
                        Infrastructure.Generator
+
   default-language:    Haskell2010
   type:                exitcode-stdio-1.0
   build-depends:       base
@@ -90,6 +93,7 @@ test-suite property-tests
                      , universum >= 0.1.11
                      , HUnit
                      , constraints
+                     , validation
 
                      , cardano-sl
                      , cardano-sl-chain
