@@ -44,7 +44,7 @@ import qualified Cardano.Wallet.Kernel.Read as Kernel
 import           Cardano.Wallet.Kernel.Types (AccountId (..), WalletId (..))
 import           Cardano.Wallet.WalletLayer (PassiveWalletLayer)
 import qualified Cardano.Wallet.WalletLayer as WalletLayer
-import qualified Cardano.Wallet.WalletLayer.Kernel.Accounts as Accounts 
+import qualified Cardano.Wallet.WalletLayer.Kernel.Accounts as Accounts
 import qualified Cardano.Wallet.WalletLayer.Kernel.Addresses as Addresses
 import qualified Cardano.Wallet.WalletLayer.Kernel.Conv as Kernel.Conv
 import qualified Cardano.Wallet.WalletLayer.Kernel.Wallets as Wallets
