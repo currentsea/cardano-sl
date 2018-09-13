@@ -12,10 +12,12 @@ import           Universum hiding (State)
 
 import           Control.Concurrent.MVar (modifyMVar_)
 import           Control.Lens (_Just)
-import           Control.Monad.Except (throwError, withExceptT)
+import           Control.Monad.Except (throwError)
 import           Data.Acid.Advanced (update')
+import           Data.List (scanl')
 import qualified Data.Map.Strict as Map
 import           Data.SafeCopy (base, deriveSafeCopy)
+import qualified Data.Set as Set
 import           Formatting (bprint, build, (%))
 import qualified Formatting.Buildable
 
@@ -40,8 +42,10 @@ import qualified Cardano.Wallet.Kernel.NodeStateAdaptor as Node
 import           Cardano.Wallet.Kernel.PrefilterTx (PrefilteredBlock (..),
                      prefilterBlock)
 import           Cardano.Wallet.Kernel.Read (getWalletCredentials)
+import           Cardano.Wallet.Kernel.Restore
 import qualified Cardano.Wallet.Kernel.Submission as Submission
 import           Cardano.Wallet.Kernel.Types (WalletId (..))
+import           Cardano.Wallet.Kernel.Util.NonEmptyMap (NonEmptyMap)
 import qualified Cardano.Wallet.Kernel.Util.NonEmptyMap as NEM
 import           Cardano.Wallet.WalletLayer.Kernel.Wallets
                      (blundToResolvedBlock)
@@ -109,6 +113,11 @@ instance Buildable BackfillFailed where
         )
         hh
 
+data ApplyBlockErrorCase
+    = AccountIsBehindBlock (OldestFirst [] ResolvedBlock)
+    | AccountIsAheadOfBlock
+    | AccountIsOnWrongFork
+
 -- | Notify all the wallets in the PassiveWallet of a new block
 --
 -- NOTE: Multiple concurrent or parallel calls to 'applyBlock' are not allowed.
@@ -118,48 +127,81 @@ instance Buildable BackfillFailed where
 -- which should carry the sole responsibility for applying blocks to a wallet.
 applyBlock :: PassiveWallet
            -> ResolvedBlock
-           -> IO (Either BackfillFailed ())
+           -> IO ()
 applyBlock pw@PassiveWallet{..} b = do
     k <- Node.getSecurityParameter _walletNode
-    runExceptT (applyOneBlock k Nothing b) >>= \case
-        Right () -> return (Right ())
-        Left  (ApplyBlockNotSuccessor curCtx cpCtx) -> runExceptT $ do
-          -- If we could not apply this block, there are three possibilities:
-          --   1. The wallet worker has fallen behind the node and is missing blocks.
-          --      In this case, the wallet worker's tip is an ancestor of the block to
+    runExceptT (applyOneBlock k Nothing b) >>= either (handleApplyBlockErrors k) pure
+
+  where
+
+      handleApplyBlockErrors :: Node.SecurityParameter
+                             -> NonEmptyMap HdAccountId ApplyBlockFailed
+                             -> IO ()
+      handleApplyBlockErrors k errs = do
+          -- If we could not apply this block to all accounts in all wallets, there are
+          -- three things that could have gone wrong:
+          --   1. An account has fallen behind the node and is missing blocks.
+          --      In this case, the account's tip is an ancestor of the block to
           --      apply, and we should try to find and apply each of the missing blocks
-          --      so that the wallet catches up to the node.
-          --   2. An account's checkpoint is actually *ahead* of the wallet worker's tip.
+          --      so that the account catches up to the node.
+          --   2. An account's checkpoint is actually *ahead* of the given block.
           --      This can happen if a restoration begins after the node sees a block,
-          --      but before the wallet worker has applied it. In this case, do nothing.
+          --      but before the wallets have applied it. In this case, do nothing. We'll
+          --      eventually process this block as part of the history restoration.
           --   3. An account's checkpoint is incomparable with the wallet worker's tip.
           --      This could happen because the account in on a different fork. In this
           --      case, start a restoration on the account's wallet.
-          blocks <- findMissing (Just curCtx) cpCtx []
-          for_ (getOldestFirst blocks) (withExceptT convertError . applyOneBlock k Nothing)
+          (toRestore, toApply) <- fmap (partitionEithers . catMaybes) $
+                   forM (Map.toList $ NEM.toMap errs) $ \(acctId, failure) ->
+                       classifyFailure failure <&> \case
+                           AccountIsAheadOfBlock       -> Nothing
+                           AccountIsBehindBlock blocks ->
+                             Just (Right (acctId, blocks))
+                           AccountIsOnWrongFork        ->
+                             Just (Left (WalletIdHdRnd $ acctId ^. hdAccountIdParent))
 
-  where
+          -- Start restoring each wallet that was incomparable to this block.
+          for_ (Set.fromList toRestore) $ restoreKnownWallet pw
+
+          -- Beginning with the oldest missing block, update each lagging account.
+          let applyOne (block, toAccts) = runExceptT (applyOneBlock k (Just toAccts) block)
+          failures <- mapM applyOne (getOldestFirst $ gatherAcctsPerBlock toApply)
+
+          case NEM.fromMap . Map.unions . map NEM.toMap . lefts $ failures of
+              Nothing       -> return ()                         -- OK, no failures, we are done!
+              Just moreErrs -> handleApplyBlockErrors k moreErrs -- Try again, better luck next time.
 
       -- Try to apply a single block, failing if it does not fit onto the most recent checkpoint.
       applyOneBlock :: Node.SecurityParameter
                     -> Maybe (Set HdAccountId)
                     -> ResolvedBlock
-                    -> ExceptT ApplyBlockFailed IO ()
+                    -> ExceptT (NonEmptyMap HdAccountId ApplyBlockFailed) IO ()
       applyOneBlock k accts b' = ExceptT $ do
           ((ctxt, blocksByAccount), metas) <- prefilterBlock' pw b'
           -- apply block to all Accounts in all Wallets
           mConfirmed <- update' _wallets $ ApplyBlock k ctxt accts blocksByAccount
           case mConfirmed of
-              Left  errs -> return . Left . snd . NEM.findMin $ errs
+              Left  errs      -> return (Left errs)
               Right confirmed -> do
                   modifyMVar_ _walletSubmission (return . Submission.remPending confirmed)
                   mapM_ (putTxMeta _walletMeta) metas
                   return $ Right ()
 
-      -- Interpret an ApplyBlockFailed error during backfilling as a BackfillFailed.
-      convertError :: ApplyBlockFailed -> BackfillFailed
-      convertError = \case
-          ApplyBlockNotSuccessor curCtx cpCtx -> SuccessorChanged curCtx cpCtx
+      -- Determine if a failure in 'ApplyBlock' was due to the account being ahead, behind,
+      -- or incomparable with the provided block.
+      classifyFailure :: ApplyBlockFailed -> IO ApplyBlockErrorCase
+      classifyFailure (ApplyBlockNotSuccessor curCtx cpCtx) = do
+          result <- runExceptT (findMissing (Just curCtx) cpCtx [])
+          case result of
+              Right blocks -> return (AccountIsBehindBlock blocks)
+              Left (CouldNotReachCheckpoint _)    ->
+                  -- Figure out if the checkpoint is incomparable, or from the future.
+                  runExceptT (findMissing cpCtx (Just curCtx) []) <&> \case
+                      Right _ -> AccountIsAheadOfBlock
+                      Left  _ -> AccountIsOnWrongFork
+              Left (CouldNotFindBlockForHeader _) -> return AccountIsOnWrongFork
+              Left (NotAMainBlock _)              -> return AccountIsOnWrongFork
+              Left (SuccessorChanged _ _)         -> return AccountIsOnWrongFork
 
       -- Find all blocks that were missing between the given block and the wallet's most recent
       -- checkpoint. 'Nothing' is used to represent the genesis block.
@@ -186,6 +228,30 @@ applyBlock pw@PassiveWallet{..} b = do
                   blundToResolvedBlock (pw ^. walletNode) blund <&> \case
                       Nothing -> Left  (NotAMainBlock hh)
                       Just rb -> Right rb
+
+      -- Compute the list of blocks that must be applied, along with the accounts that
+      -- should be updated for each block.
+      -- PRECONDITION: Each list of blocks should eminate from the same "newest" block.
+      gatherAcctsPerBlock :: [(HdAccountId, OldestFirst [] ResolvedBlock)]
+                          -> OldestFirst [] (ResolvedBlock, Set HdAccountId)
+      gatherAcctsPerBlock a2bs =
+        let firstAppearedIn :: Map Int (Set HdAccountId)
+            firstAppearedIn = Map.fromListWith Set.union
+                              $ map (\(a, bs) -> (longestLength - length bs, Set.singleton a)) a2bs
+
+            -- The longest sequence of blocks; due to the precondition on gatherAcctsPerBlock,
+            -- every sequence of blocks appearing in a2bs is a suffix of this sequence.
+            longest :: OldestFirst [] ResolvedBlock
+            longest = maximumBy (comparing length) $ map snd a2bs
+
+            longestLength :: Int
+            longestLength = length longest
+
+            -- The accounts to update for each block in 'longest'.
+            updateSets :: [Set HdAccountId]
+            updateSets = scanl' Set.union Set.empty
+                         $ map (\n -> Map.findWithDefault Set.empty n firstAppearedIn) [0..]
+        in OldestFirst $ zip (getOldestFirst longest) updateSets
 
 -- | Switch to a new fork
 --

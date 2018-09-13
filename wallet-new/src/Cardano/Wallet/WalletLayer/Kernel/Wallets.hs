@@ -14,7 +14,6 @@ import           Universum
 
 import           Control.Monad.Except (throwError)
 import           Data.Coerce (coerce)
-import qualified Data.Map as M
 import           Data.Maybe (fromJust)
 
 import           Pos.Chain.Block (Blund, mainBlockSlot, undoTx)
@@ -32,7 +31,6 @@ import           Cardano.Wallet.Kernel.DB.BlockContext
 import qualified Cardano.Wallet.Kernel.DB.HdWallet as HD
 import           Cardano.Wallet.Kernel.DB.InDb (fromDb)
 import           Cardano.Wallet.Kernel.DB.Resolved (ResolvedBlock)
-import           Cardano.Wallet.Kernel.DB.TxMeta.Types
 import           Cardano.Wallet.Kernel.DB.Util.IxSet (IxSet)
 import qualified Cardano.Wallet.Kernel.DB.Util.IxSet as IxSet
 import           Cardano.Wallet.Kernel.Internal (walletKeystore, _wriProgress)
@@ -40,8 +38,6 @@ import qualified Cardano.Wallet.Kernel.Internal as Kernel
 import qualified Cardano.Wallet.Kernel.Keystore as Keystore
 import           Cardano.Wallet.Kernel.NodeStateAdaptor (NodeStateAdaptor)
 import qualified Cardano.Wallet.Kernel.NodeStateAdaptor as Node
-import           Cardano.Wallet.Kernel.PrefilterTx (PrefilteredBlock,
-                     prefilterBlock)
 import qualified Cardano.Wallet.Kernel.Read as Kernel
 import           Cardano.Wallet.Kernel.Restore (restoreWallet)
 import           Cardano.Wallet.Kernel.Types (RawResolvedBlock (..),
@@ -110,13 +106,7 @@ createWallet wallet newWalletRequest = liftIO $ do
 
         -- Synchronously restore the wallet balance, and begin to
         -- asynchronously reconstruct the wallet's history.
-        let prefilter :: Blund -> IO (Map HD.HdAccountId PrefilteredBlock, [TxMeta])
-            prefilter blund =
-                blundToResolvedBlock (wallet ^. Kernel.walletNode) blund <&> \case
-                    Nothing -> (M.empty, [])
-                    Just rb -> prefilterBlock rb wId esk
-
-            mbHdAddress = newHdAddress esk
+        let mbHdAddress = newHdAddress esk
                                        pwd
                                        (Kernel.defaultHdAccountId rootId)
                                        (Kernel.defaultHdAddressId rootId)
@@ -131,7 +121,6 @@ createWallet wallet newWalletRequest = liftIO $ do
                       (HD.WalletName walletName)
                       hdAssuranceLevel
                       esk
-                      prefilter
 
                 -- Return the wallet information, with an updated balance.
                 let root' = mkRoot walletName (toAssuranceLevel hdAssuranceLevel) now root
