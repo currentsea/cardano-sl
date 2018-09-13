@@ -2,18 +2,17 @@
 {-# LANGUAGE InstanceSigs               #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 
 -- | Some utilities for working with acid-state
 module Cardano.Wallet.Kernel.DB.Util.AcidState (
     -- * Updates
     Update' -- opaque
-  , mapUpdateErrors
     -- ** Running updates
   , runUpdate'
   , runUpdateDiscardSnapshot
   , runUpdate_
   , runUpdateNoErrors
-  , runUpdateDiscardSnapshot
   , tryUpdate'
   , mapUpdateErrors
   , discardUpdateErrors
@@ -73,14 +72,14 @@ mapUpdateErrors :: (e -> e') -> Update' e st a -> Update' e' st a
 mapUpdateErrors f (Update' upd) = Update' $
     strictStateT $ withExcept f . runStrictStateT upd
 
-discardUpdateErrors :: Update' st e a -> Update' st e' ()
+discardUpdateErrors :: Update' e st a -> Update' e' st ()
 discardUpdateErrors (Update' upd) = Update' $
     strictStateT $ \s -> ExceptT $ do
         runExceptT (runStrictStateT (void upd) s) <&> \case
             Left  _       -> return ((), s)
             Right (_, s') -> return ((), s')
 
-tryUpdate' :: forall st e a. Update' st e a -> Update' st Void (Either e a)
+tryUpdate' :: forall st e a. Update' e st a -> Update' Void st (Either e a)
 tryUpdate' (Update' action) = do
     state0 <- get
     let convert :: Either e (a, st) -> Either Void (Either e a, st)
@@ -88,14 +87,6 @@ tryUpdate' (Update' action) = do
             Left  e           -> (Left  e, state0)
             Right (x, state1) -> (Right x, state1)
     Update' $ mapStrictStateT (mapExcept convert) action
-
--- | Like \"runUpdate'\", but it discards the DB after running the query.
--- Use this function sparingly only when you are sure you won't need the
--- DB snapshot afterwards. If you really want to re-access the DB
--- after you ran an 'Update', it means the function you need is \"runUpdate'\".
-runUpdateDiscardSnapshot :: forall e st a. Update' st e a
-                         -> Update st (Either e a)
-runUpdateDiscardSnapshot upd = fmap snd <$> runUpdate' upd
 
 {-------------------------------------------------------------------------------
   Queries
