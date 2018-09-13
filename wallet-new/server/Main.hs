@@ -43,7 +43,7 @@ import           Cardano.Wallet.Kernel (PassiveWallet)
 import qualified Cardano.Wallet.Kernel as Kernel
 import qualified Cardano.Wallet.Kernel.Internal as Kernel.Internal
 import qualified Cardano.Wallet.Kernel.Keystore as Keystore
-import           Cardano.Wallet.Kernel.Migration (migrateAcid)
+import           Cardano.Wallet.Kernel.Migration (migrateLegacyDataLayer)
 import qualified Cardano.Wallet.Kernel.NodeStateAdaptor as NodeStateAdaptor
 import           Cardano.Wallet.Server.CLI (ChooseWalletBackend (..),
                      NewWalletBackendParams (..), WalletBackendParams (..),
@@ -145,7 +145,7 @@ actionWithWallet coreConfig txpConfig sscParams nodeParams ntpConfig params =
               })
           WalletLayer.Kernel.bracketPassiveWallet dbMode logMessage' keystore nodeState $ \walletLayer passiveWallet -> do
               Kernel.init passiveWallet
-              migrateAcid logMessage' passiveWallet dbPath keystore
+              migrateLegacyDataLayer logMessage' passiveWallet dbPath keystore
               Kernel.Mode.runWalletMode coreConfig
                                         txpConfig
                                         nr
