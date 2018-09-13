@@ -126,6 +126,7 @@ data ApplyBlockErrorCase
 -- with each other and cause both to fail.
 -- The serialization of calls to 'applyBlock' is handled by the wallet worker,
 -- which should carry the sole responsibility for applying blocks to a wallet.
+{-# ANN applyBlock ("HLint: ignore Reduce duplication" :: Text) #-}
 applyBlock :: PassiveWallet
            -> ResolvedBlock
            -> IO ()
