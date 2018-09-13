@@ -336,7 +336,7 @@ instance Differentiable Checkpoint DeltaCheckpoint where
     findDelta = findDeltaCheckpoint
     applyDelta = applyDeltaCheckpoint
 
-instance Differentiable PartialCheckpoint DeltaCheckpoint where
+instance Differentiable PartialCheckpoint DeltaPartialCheckpoint where
     findDelta = findDeltaPartialCheckpoint
     applyDelta = applyDeltaPartialCheckpoint
 
@@ -368,26 +368,26 @@ applyDeltaCheckpoint c DeltaCheckpoint{..} =
     , _checkpointForeign     = applyDelta (_checkpointForeign c) dcForeign
   }
 
-findDeltaPartialCheckpoint :: PartialCheckpoint -> PartialCheckpoint -> DeltaCheckpoint
-findDeltaPartialCheckpoint c c' = DeltaCheckpoint {
-    dcUtxo         = findDelta (_pcheckpointUtxo c) (_pcheckpointUtxo c')
-  , dcUtxoBalance  = _pcheckpointUtxoBalance c
-  , dcPending      = findDelta (_pcheckpointPending c) (_pcheckpointPending c')
-  , dcBlockMeta    = findDelta (localBlockMeta . _pcheckpointBlockMeta $ c)
+findDeltaPartialCheckpoint :: PartialCheckpoint -> PartialCheckpoint -> DeltaPartialCheckpoint
+findDeltaPartialCheckpoint c c' = DeltaPartialCheckpoint {
+    dcpUtxo         = findDelta (_pcheckpointUtxo c) (_pcheckpointUtxo c')
+  , dcpUtxoBalance  = _pcheckpointUtxoBalance c
+  , dcpPending      = findDelta (_pcheckpointPending c) (_pcheckpointPending c')
+  , dcpBlockMeta    = findDelta (localBlockMeta . _pcheckpointBlockMeta $ c)
                                     (localBlockMeta . _pcheckpointBlockMeta $ c')
-  , dcForeign      = findDelta (_pcheckpointForeign c) (_pcheckpointForeign c')
-  , dcContext      = _pcheckpointContext c
+  , dcpForeign      = findDelta (_pcheckpointForeign c) (_pcheckpointForeign c')
+  , dcpContext      = _pcheckpointContext c
 }
 
-applyDeltaPartialCheckpoint :: PartialCheckpoint -> DeltaCheckpoint -> PartialCheckpoint
-applyDeltaPartialCheckpoint c DeltaCheckpoint{..} =
+applyDeltaPartialCheckpoint :: PartialCheckpoint -> DeltaPartialCheckpoint -> PartialCheckpoint
+applyDeltaPartialCheckpoint c DeltaPartialCheckpoint{..} =
   PartialCheckpoint {
-    _pcheckpointUtxo          = applyDelta (_pcheckpointUtxo c) dcUtxo
-    , _pcheckpointUtxoBalance = dcUtxoBalance
-    , _pcheckpointPending     = applyDelta (_pcheckpointPending c) dcPending
-    , _pcheckpointBlockMeta   = LocalBlockMeta $ applyDelta (localBlockMeta ._pcheckpointBlockMeta $ c) dcBlockMeta
-    , _pcheckpointForeign     = applyDelta (_pcheckpointForeign c) dcForeign
-    , _pcheckpointContext     = dcContext
+      _pcheckpointUtxo        = applyDelta (_pcheckpointUtxo c) dcpUtxo
+    , _pcheckpointUtxoBalance = dcpUtxoBalance
+    , _pcheckpointPending     = applyDelta (_pcheckpointPending c) dcpPending
+    , _pcheckpointBlockMeta   = LocalBlockMeta $ applyDelta (localBlockMeta ._pcheckpointBlockMeta $ c) dcpBlockMeta
+    , _pcheckpointForeign     = applyDelta (_pcheckpointForeign c) dcpForeign
+    , _pcheckpointContext     = dcpContext
   }
 
 
