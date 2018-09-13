@@ -225,14 +225,14 @@ applyBlockPartial pb = do
         blockMeta'        = updateLocalBlockMeta pb (current ^. pcheckpointBlockMeta)
         (foreign', rem2)  = updatePending        pb (current ^. pcheckpointForeign)
     if (pfbContext pb) `blockContextSucceeds` (current ^. cpContext) then do
-      put $ NewestFirst $ PartialCheckpoint {
+      put $ Checkpoints $ NewestFirst $ PartialCheckpoint {
           _pcheckpointUtxo        = InDb utxo'
         , _pcheckpointUtxoBalance = InDb balance'
         , _pcheckpointPending     = pending'
         , _pcheckpointBlockMeta   = blockMeta'
         , _pcheckpointForeign     = foreign'
         , _pcheckpointContext     = pfbContext pb
-        } SNE.<| getNewestFirst checkpoints
+        } SNE.<| getNewestFirst ls
       return $ Set.unions [rem1, rem2]
     else
       throwError $ ApplyBlockNotSuccessor

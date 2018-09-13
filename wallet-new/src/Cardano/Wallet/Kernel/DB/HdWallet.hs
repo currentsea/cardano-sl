@@ -400,7 +400,7 @@ finishRestoration (SecurityParameter k) (HdAccountIncomplete (Checkpoints partia
           (mostRecentHistorical :| olderHistorical)
       Just secondLast -> let checkpoint = secondLast ^. pcheckpointContext in
         if checkpoint `blockContextSucceeds` (mostRecentHistorical ^. checkpointContext)
-          then HdAccountUpToDate $ takeNewest k $ NewestFirst $
+          then HdAccountUpToDate $ Checkpoints $ takeNewest k $ NewestFirst $
                  SNE.prependList
                    (mkFull <$> initPartial)
                    (mostRecentHistorical :| olderHistorical)
@@ -454,9 +454,9 @@ hdAddressRootId = hdAddressAccountId . hdAccountIdParent
 hdAccountStateCurrent :: (forall c. IsCheckpoint c => Getter c a) -> Getter HdAccountState a
 hdAccountStateCurrent g = to $ \case
     HdAccountStateUpToDate st ->
-      st ^. hdUpToDateCheckpoints . _Wrapped . SNE.head . g
+      st ^. hdUpToDateCheckpoints . unCheckpoints . _Wrapped . SNE.head . g
     HdAccountStateIncomplete st ->
-      st ^. hdIncompleteCurrent   . _Wrapped . SNE.head . g
+      st ^. hdIncompleteCurrent   . unCheckpoints . _Wrapped . SNE.head . g
 
 {-------------------------------------------------------------------------------
   Unknown identifiers
