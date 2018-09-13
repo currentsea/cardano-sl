@@ -86,16 +86,19 @@ test-suite property-tests
                      , data-default >= 0.7
                      , hashable
                      , hspec
+                     , HUnit
                      , lens
                      , mtl
+                     , reflection
                      , safe-exceptions >= 0.1
                      , text
                      , universum >= 0.1.11
-                     , HUnit
                      , constraints
                      , validation
+                     , unordered-containers                     
 
                      , cardano-sl
+                     , cardano-sl-db
                      , cardano-sl-chain
                      , cardano-sl-client
                      , cardano-sl-core
