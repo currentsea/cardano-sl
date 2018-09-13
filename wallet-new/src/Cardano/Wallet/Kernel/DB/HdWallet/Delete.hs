@@ -31,7 +31,7 @@ deleteHdRoot rootId = do
         at rootId .= Nothing
 
 -- | Delete all accounts and addresses associated with a wallet.
-deleteAllHdAccounts :: HdRootId -> Update' HdWallets UnknownHdRoot ()
+deleteAllHdAccounts :: HdRootId -> Update' UnknownHdRoot HdWallets ()
 deleteAllHdAccounts rootId = do
     -- Check that the root exists to begin with
     zoomHdRootId identity rootId $

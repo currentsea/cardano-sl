@@ -22,8 +22,9 @@ import           Formatting (bprint, build, (%))
 import qualified Formatting.Buildable
 
 import           Pos.Chain.Block (HeaderHash)
+import           Pos.Chain.Txp (TxId)
+import           Pos.Core (Config (..))
 import           Pos.Core.Chrono (OldestFirst (..))
-import           Pos.Core.Txp (TxId)
 import           Pos.Crypto (EncryptedSecretKey)
 import           Pos.DB.Block (getBlund)
 
@@ -221,8 +222,9 @@ applyBlock pw@PassiveWallet{..} b = do
 
       -- Find and resolve the block with a given hash.
       hashToBlock :: HeaderHash -> ExceptT BackfillFailed IO ResolvedBlock
-      hashToBlock hh = ExceptT $
-          Node.withNodeState (pw ^. walletNode) (\_lock -> getBlund hh) >>= \case
+      hashToBlock hh = ExceptT $ do
+          gh <- liftIO (configGenesisHash <$> Node.getCoreConfig (pw ^. walletNode))
+          Node.withNodeState (pw ^. walletNode) (\_lock -> getBlund gh hh) >>= \case
               Nothing    -> return $ Left (CouldNotFindBlockForHeader hh)
               Just blund ->
                   blundToResolvedBlock (pw ^. walletNode) blund <&> \case

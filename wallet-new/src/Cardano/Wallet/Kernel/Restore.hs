@@ -45,8 +45,9 @@ import           Cardano.Wallet.Kernel.Internal (WalletRestorationInfo (..),
 import qualified Cardano.Wallet.Kernel.Keystore as Keystore
 import           Cardano.Wallet.Kernel.NodeStateAdaptor (Lock, LockContext (..),
                      NodeConstraints, NodeStateAdaptor, WithNodeState,
-                     defaultGetSlotStart, filterUtxo, getSecurityParameter,
-                     getSlotCount, mostRecentMainBlock, withNodeState)
+                     defaultGetSlotStart, filterUtxo, getCoreConfig,
+                     getSecurityParameter, getSlotCount, mostRecentMainBlock,
+                     withNodeState)
 import           Cardano.Wallet.Kernel.PrefilterTx (AddrWithId,
                      PrefilteredBlock, UtxoWithAddrId, WalletKey,
                      prefilterBlock, prefilterUtxo', toHdAddressId,
@@ -60,10 +61,11 @@ import           Cardano.Wallet.Kernel.Wallets (createWalletHdRnd)
 
 import           Pos.Chain.Block (Block, Blund, HeaderHash, Undo, mainBlockSlot,
                      undoTx)
-import           Pos.Chain.Txp (GenesisUtxo (..), Utxo, genesisUtxo)
-import           Pos.Core (BlockCount (..), Coin, SlotId, flattenSlotId,
-                     getCurrentTimestamp, mkCoin, unsafeIntegerToCoin)
-import           Pos.Core.Txp (TxIn (..), TxOut (..), TxOutAux (..))
+import           Pos.Chain.Txp (TxIn (..), TxOut (..), TxOutAux (..), Utxo,
+                     genesisUtxo)
+import           Pos.Core as Core (Address, BlockCount (..), Coin, Config (..),
+                     GenesisHash, SlotId, flattenSlotId, getCurrentTimestamp,
+                     mkCoin, unsafeIntegerToCoin)
 import           Pos.Crypto (EncryptedSecretKey)
 import           Pos.DB.Block (getFirstGenesisBlockHash, getUndo,
                      resolveForwardLink)
@@ -91,13 +93,14 @@ import           Pos.Util.Trace (Severity (Error))
 restoreWallet :: Kernel.PassiveWallet
               -> Bool
               -- ^ Did this wallet have a spending password set?
-              -> Address
+              -> Core.Address
               -- ^ The stock address to use for the companion 'HdAccount'.
               -> HD.WalletName
               -> HD.AssuranceLevel
               -> EncryptedSecretKey
               -> IO (Either CreateHdRootError (HD.HdRoot, Coin))
-restoreWallet pw spendingPass defaultCardanoAddress name assurance esk = do
+restoreWallet pw hasSpendingPassword defaultCardanoAddress name assurance esk = do
+    coreConfig <- getCoreConfig (pw ^. walletNode)
     walletInitInfo <- withNodeState (pw ^. walletNode) $ getWalletInitInfo coreConfig wkey
     case walletInitInfo of
       WalletCreate utxos -> do
@@ -108,8 +111,9 @@ restoreWallet pw spendingPass defaultCardanoAddress name assurance esk = do
       WalletRestore utxos tgt -> do
           -- Create the wallet for restoration, deleting the wallet first if it
           -- already exists.
-          mRoot <- createWalletHdRnd pw spendingPass name assurance esk $ \root ->
-               Right $ RestoreHdWallet root tgt utxos
+          mRoot <- createWalletHdRnd pw hasSpendingPassword defaultCardanoAddress name assurance esk $
+                  \root defaultHdAccount defaultHdAddress ->
+                      Right $ RestoreHdWallet root defaultHdAccount defaultHdAddress tgt utxos
           case mRoot of
               Left  err  -> return (Left err)
               Right root -> do
@@ -131,7 +135,8 @@ restoreWallet pw spendingPass defaultCardanoAddress name assurance esk = do
 
     restart :: HD.HdRoot -> IO ()
     restart root = do
-        walletInitInfo <- withNodeState (pw ^. walletNode) $ getWalletInitInfo wkey
+        coreConfig <- getCoreConfig (pw ^. walletNode)
+        walletInitInfo <- withNodeState (pw ^. walletNode) $ getWalletInitInfo coreConfig wkey
         case walletInitInfo of
             WalletCreate _utxos -> return ()
             WalletRestore _utxos tgt ->
@@ -170,12 +175,13 @@ restoreKnownWallet pw wId@(WalletIdHdRnd rootId) = do
                 let prefilter = mkPrefilter pw wId esk
                     wkey = (wId, keyToWalletDecrCredentials (KeyForRegular esk))
 
+                coreConfig <- getCoreConfig (pw ^. walletNode)
                 db <- getWalletSnapshot pw
                 case db ^. dbHdWallets . HD.hdWalletsRoots . at rootId of
                     Nothing   -> return () -- TODO (@mn): this really shouldn't happen
                     Just root ->
                       let restart =
-                              withNodeState (pw ^. walletNode) (getWalletInitInfo wkey) >>= \case
+                              withNodeState (pw ^. walletNode) (getWalletInitInfo coreConfig wkey) >>= \case
                                   WalletCreate  _utxos     -> return ()
                                   WalletRestore _utxos tgt ->
                                     beginRestoration pw wId prefilter root tgt restart
@@ -268,10 +274,11 @@ getWalletInitInfo coreConfig wKey@(wId, wdc) lock = do
                                    (genesisUtxo $ configGenesisData coreConfig)
 
     -- Get the tip
-    mTip <- mostRecentMainBlock (configGenesisHash coreConfig) tipHeader
+    let gh = configGenesisHash coreConfig
+    mTip <- mostRecentMainBlock gh tipHeader
     case mTip of
       Nothing  -> return (WalletCreate genUtxo)
-      Just tip -> WalletRestore (mergeInfo curUtxo genUtxo) <$> mainBlockContext (tipInfo tip)
+      Just tip -> WalletRestore (mergeInfo curUtxo genUtxo) <$> mainBlockContext gh tip
 
   where
 
@@ -303,17 +310,19 @@ restoreWalletHistoryAsync :: Kernel.PassiveWallet
                           -> IORef WalletRestorationProgress
                           -> (HeaderHash, SlotId)
                           -> IO ()
-restoreWalletHistoryAsync wallet rootId prefilter progress (tgtHash, tgtSlot) =
+restoreWalletHistoryAsync wallet rootId prefilter progress (tgtHash, tgtSlot) = do
+    genesisHash <- configGenesisHash <$> getCoreConfig (wallet ^. walletNode)
     -- 'getFirstGenesisBlockHash' is confusingly named: it returns the hash of
     -- the first block /after/ the genesis block.
-    withNode getFirstGenesisBlockHash >>= restore NoTimingData
+    startingPoint <- withNode $ getFirstGenesisBlockHash genesisHash
+    restore genesisHash startingPoint NoTimingData
   where
     wId :: WalletId
     wId = WalletIdHdRnd rootId
 
     -- Process the restoration of the block with the given 'HeaderHash'.
-    restore :: TimingData -> HeaderHash -> IO ()
-    restore timing hh = do
+    restore :: GenesisHash -> HeaderHash -> TimingData -> IO ()
+    restore genesisHash hh timing = do
 
         -- Updating the average rate every 5 blocks.
         (rate, timing') <- tickTiming 5 timing
@@ -324,12 +333,12 @@ restoreWalletHistoryAsync wallet rootId prefilter progress (tgtHash, tgtSlot) =
         -- Skip EBBs
         whenRight block $ \mb -> do
             -- Filter the blocks by account
-            blund <- (Right mb, ) <$> getUndoOrThrow hh
+            blund <- (Right mb, ) <$> getUndoOrThrow genesisHash hh
             (prefilteredBlocks, txMetas) <- prefilter blund
 
             -- Apply the block
             k    <- getSecurityParameter (wallet ^. walletNode)
-            ctxt <- withNode $ mainBlockContext mb
+            ctxt <- withNode $ mainBlockContext genesisHash mb
             mErr <- update (wallet ^. wallets) $
                    ApplyHistoricalBlock k ctxt prefilteredBlocks
             case mErr of
@@ -353,7 +362,7 @@ restoreWalletHistoryAsync wallet rootId prefilter progress (tgtHash, tgtSlot) =
             finish
           else nextHistoricalHash hh >>= \case
             Nothing  -> throwM (RestorationFinishUnreachable tgtHash hh)
-            Just hh' -> restore timing' hh'
+            Just hh' -> restore genesisHash hh' timing'
 
     -- TODO (@mn): probably should use some kind of bracket to ensure this cleanup happens.
     finish :: IO ()
@@ -447,10 +456,11 @@ instance Exception RestorationException
 -- by the invariants established in the 'Blund'.
 blundToResolvedBlock :: NodeStateAdaptor IO -> Blund -> IO (Maybe ResolvedBlock)
 blundToResolvedBlock node (b,u) = do
+    genesisHash <- configGenesisHash <$> getCoreConfig node
     case b of
       Left  _ebb      -> return Nothing
       Right mainBlock -> withNodeState node $ \_lock -> do
-        ctxt  <- mainBlockContext mainBlock
+        ctxt  <- mainBlockContext genesisHash mainBlock
         mTime <- defaultGetSlotStart (mainBlock ^. mainBlockSlot)
         now   <- liftIO $ getCurrentTimestamp
         return $ Just $ fromRawResolvedBlock UnsafeRawResolvedBlock {

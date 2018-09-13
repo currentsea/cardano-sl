@@ -83,7 +83,6 @@ import           Cardano.Wallet.Kernel.PrefilterTx (AddrWithId,
 import           Cardano.Wallet.Kernel.Util (markMissingMapEntries)
 import           Cardano.Wallet.Kernel.Util.NonEmptyMap (NonEmptyMap)
 import qualified Cardano.Wallet.Kernel.Util.NonEmptyMap as NEM
-import           Cardano.Wallet.Kernel.Util.StrictNonEmpty (StrictNonEmpty)
 import           Test.QuickCheck (Arbitrary (..), oneof)
 
 {-------------------------------------------------------------------------------
@@ -256,7 +255,7 @@ applyBlock :: SecurityParameter
 applyBlock k context restriction blocks = runUpdateDiscardSnapshot $ do
     -- Try to apply the block to each account in each wallet. If *any* have failed, throw the
     -- list of *all* failures; otherwise, run the update.
-    let applyAll :: Update' DB Void (Map HdAccountId (Either Spec.ApplyBlockFailed (Set TxId)))
+    let applyAll :: Update' Void DB (Map HdAccountId (Either Spec.ApplyBlockFailed (Set TxId)))
         applyAll = zoom dbHdWallets $ updateAccounts =<< mkUpdates <$> use hdWalletsAccounts
     (problems, successes) <- fmap (Map.mapEither id) (mapUpdateErrors absurd applyAll)
     maybe (return successes) throwError (NEM.fromMap problems)
@@ -526,11 +525,11 @@ restoreHdWallet :: HdRoot
                 -> Map HdAccountId (Utxo, Utxo, [AddrWithId])
                 -- ^ Current and genesis UTxO per account
                 -> Update DB (Either HD.CreateHdRootError ())
-restoreHdWallet newRoot ctx utxoByAccount =
+restoreHdWallet newRoot defaultHdAccountId defaultHdAddress ctx utxoByAccount =
     runUpdateDiscardSnapshot $ do
       zoom dbHdWallets $ do
           recreateHdRoot newRoot
-          updateAccounts_ $ map mkUpdate (Map.toList utxoByAccount)
+          updateAccounts_ $ map mkUpdate (Map.toList (insertDefault utxoByAccount))
   where
     mkUpdate :: (HdAccountId, (Utxo, Utxo, [AddrWithId]))
              -> AccountUpdate HD.CreateHdRootError ()
@@ -695,7 +694,7 @@ deleteHdAccount :: HdAccountId -> Update DB (Either UnknownHdAccount ())
 deleteHdAccount accId = runUpdateDiscardSnapshot . zoom dbHdWallets $
     HD.deleteHdAccount accId
 
-recreateHdRoot :: HdRoot -> Update' HdWallets HD.CreateHdRootError ()
+recreateHdRoot :: HdRoot -> Update' HD.CreateHdRootError HdWallets ()
 recreateHdRoot hdRoot = do
     -- Delete the wallet, if it exists.
     discardUpdateErrors (HD.deleteHdRoot (hdRoot ^. hdRootId))

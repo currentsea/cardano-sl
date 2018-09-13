@@ -32,6 +32,7 @@ module Cardano.Wallet.Kernel.Internal (
   , cancelRestoration
   , prepareForRestoration
   , restartRestoration
+  , stopAllRestorations
     -- ** Lenses
   , wrpCurrentSlot
   , wrpTargetSlot
@@ -193,6 +194,12 @@ restartRestoration = _wriRestart
 
 prepareForRestoration :: WalletRestorationInfo -> IO (Map HdAccountId HdAccountState)
 prepareForRestoration = _wriPrepare
+
+stopAllRestorations :: PassiveWallet -> IO ()
+stopAllRestorations pw = do
+    modifyMVar_ (pw ^. walletRestorationTask . to _wrt) $ \mp -> do
+        for_ mp cancelRestoration
+        return Map.empty
 
 {-------------------------------------------------------------------------------
   Active wallet
