@@ -23,7 +23,7 @@ import           Pos.Launcher (NodeParams (..), NodeResources (..),
                      bpLoggingParams, bracketNodeResources, loggerBracket,
                      lpDefaultName, runNode, withConfigurations)
 import           Pos.Launcher.Configuration (AssetLockPath (..),
-                     ConfigurationOptions, HasConfigurations)
+                     ConfigurationOptions (cfoKey), HasConfigurations)
 import           Pos.Util (logException)
 import           Pos.Util.CompileInfo (HasCompileInfo, withCompileInfo)
 import           Pos.Util.Wlog (LoggerName, Severity (..), logInfo, logMessage,
@@ -251,7 +251,8 @@ main :: IO ()
 main = withCompileInfo $ do
     cfg <- getWalletNodeOptions
     putText "Wallet is starting..."
+    let getKey = cfoKey . CLI.configurationOptions . CLI.commonArgs . wsoNodeArgs
     let loggingParams = CLI.loggingParams defaultLoggerName (wsoNodeArgs cfg)
-    loggerBracket loggingParams . logException "node" $ do
+    loggerBracket (getKey cfg) loggingParams . logException "node" $ do
         logInfo "[Attention] Software is built with the wallet backend"
         startEdgeNode cfg

@@ -22,7 +22,8 @@ import qualified Pos.Client.CLI as CLI
 import           Pos.Core as Core (Config (..))
 import           Pos.Launcher (HasConfigurations, NodeParams (..),
                      loggerBracket, runNodeRealSimple, withConfigurations)
-import           Pos.Launcher.Configuration (AssetLockPath (..))
+import           Pos.Launcher.Configuration (AssetLockPath (..),
+                     ConfigurationOptions (cfoKey))
 import           Pos.Util (logException)
 import           Pos.Util.CompileInfo (HasCompileInfo, withCompileInfo)
 import           Pos.Util.Wlog (LoggerName, logInfo)
@@ -66,8 +67,9 @@ main = withCompileInfo $ do
     args@(CLI.SimpleNodeArgs commonNodeArgs _) <- CLI.getSimpleNodeOptions
     let loggingParams = CLI.loggingParams loggerName commonNodeArgs
     let conf          = CLI.configurationOptions (CLI.commonArgs commonNodeArgs)
+    let getKey        = cfoKey conf
     let blPath        = AssetLockPath <$> cnaAssetLockPath commonNodeArgs
-    loggerBracket loggingParams
+    loggerBracket getKey loggingParams
         . logException "node"
         $ withConfigurations blPath
                              (cnaDumpGenesisDataPath commonNodeArgs)

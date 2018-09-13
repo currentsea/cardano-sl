@@ -155,7 +155,7 @@ genVssCert coreConfig path = do
 main :: IO ()
 main = do
     KeygenOptions {..} <- getKeygenOptions
-    setupLogging $ defaultInteractiveConfiguration Debug
+    setupLogging "keygen" $ defaultInteractiveConfiguration Debug
     usingLoggerName "keygen"
         $ withConfigurations Nothing Nothing False koConfigurationOptions
         $ \coreConfig _ _ -> do
