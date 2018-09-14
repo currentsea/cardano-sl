@@ -214,7 +214,8 @@ bracketLegacyDB :: FilePath -> (WS.WalletStorage -> IO a) -> IO a
 bracketLegacyDB legacyDbPath withWalletStorage =
     bracket (openState False legacyDbPath)
             closeState
-            (\db -> getWalletSnapshot db >>= withWalletStorage)
+            -- Apparently hlint thinks this is more readable, heh.
+            (getWalletSnapshot >=> withWalletStorage)
 
 -- | Move the legacy database into a backup directory.
 moveLegacyDB :: FilePath -> IO FilePath
