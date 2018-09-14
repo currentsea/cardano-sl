@@ -12,6 +12,9 @@ module UTxO.Interpreter (
     -- * Interpretation context
   , IntCtxt -- opaque
   , initIntCtxt
+    -- * Interpretation checkpoints
+  , IntCheckpoint(..)
+  , mostRecentCheckpoint
     -- * Interpretation monad
   , IntT
   , runIntT
@@ -172,6 +175,9 @@ data IntCheckpoint = IntCheckpoint {
       -- Set to 'Nothing' for the first checkpoint.
     , icMainBlockHdr  :: !(Maybe HeaderHash)
 
+      -- | The header hash of the previous /main/ block.
+    , icPrevMainHH    :: !(Maybe HeaderHash)
+
       -- | Slot leaders for the current epoch
     , icEpochLeaders  :: !SlotLeaders
 
@@ -213,11 +219,16 @@ initIntCtxt boot = do
               icSlotId        = translateFirstSlot
             , icBlockHeader   = genesis
             , icMainBlockHdr  = Nothing
+            , icPrevMainHH    = Nothing
             , icEpochLeaders  = leaders
             , icStakes        = initStakes
             , icCrucialStakes = initStakes
             } :| []
         }
+
+-- | Get the most recent checkpoint from the context.
+mostRecentCheckpoint :: IntCtxt h -> IntCheckpoint
+mostRecentCheckpoint = NE.head . _icCheckpoints
 
 {-------------------------------------------------------------------------------
   Extract some values we need from the translation context
@@ -381,6 +392,7 @@ mkCheckpoint prev raw@(UnsafeRawResolvedBlock block _inputs _ ctxt) = do
         icSlotId        = slot
       , icBlockHeader   = BlockHeaderMain $ block ^. gbHeader
       , icMainBlockHdr  = Just $ headerHash block
+      , icPrevMainHH    = Just $ headerHash (icBlockHeader prev)
       , icEpochLeaders  = icEpochLeaders prev
       , icStakes        = newStakes
       , icCrucialStakes = if isCrucial

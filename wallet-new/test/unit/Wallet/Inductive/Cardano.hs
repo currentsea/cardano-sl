@@ -22,6 +22,7 @@ import           Data.Time.Units (fromMicroseconds)
 import           Formatting (bprint, build, formatToString, sformat, (%))
 import qualified Formatting.Buildable
 
+import           Pos.Chain.Block (headerHash)
 import           Pos.Chain.Txp (Utxo, formatUtxo)
 import           Pos.Core (Timestamp (..))
 import           Pos.Core.Chrono
@@ -30,8 +31,9 @@ import           Pos.Crypto (EncryptedSecretKey, emptyPassphrase)
 import qualified Cardano.Wallet.Kernel.Addresses as Kernel
 import qualified Cardano.Wallet.Kernel.BListener as Kernel
 import qualified Cardano.Wallet.Kernel.DB.AcidState as DB
+import qualified Cardano.Wallet.Kernel.DB.BlockContext as DB
 import qualified Cardano.Wallet.Kernel.DB.HdWallet as HD
-import           Cardano.Wallet.Kernel.DB.InDb (fromDb)
+import           Cardano.Wallet.Kernel.DB.InDb (InDb (..), fromDb)
 import qualified Cardano.Wallet.Kernel.Internal as Internal
 import           Cardano.Wallet.Kernel.Invariants as Kernel
 import qualified Cardano.Wallet.Kernel.Keystore as Keystore
@@ -82,7 +84,7 @@ data EventCallbacks h m = EventCallbacks {
     , walletRollbackT :: InductiveCtxt h -> HD.HdAccountId -> m ()
 
       -- | Switch to fork
-    , walletSwitchToForkT :: InductiveCtxt h -> HD.HdAccountId -> Int -> OldestFirst [] RawResolvedBlock -> m ()
+    , walletSwitchToForkT :: InductiveCtxt h -> HD.HdAccountId -> DB.BlockContext -> Int -> OldestFirst [] RawResolvedBlock -> m ()
     }
 
 -- | The context in which a function of 'EventCallbacks' gets called
@@ -176,11 +178,19 @@ interpretT useWW injErr mkWallet EventCallbacks{..} Inductive{..} =
         go ic hist w (e@(ExtSwitchToFork n bs):es) = do
             let w'      = switchToFork w n bs
                 hist'   = kernelEvent hist e w'
+                tip     = blockContext (mostRecentCheckpoint ic)
             (bs', ic') <- int' hist' ic (IntSwitchToFork n bs)
             let hist''  = kernelRollback hist' ic'
                 indCtxt = InductiveCtxt hist'' ic' w'
-            withConfig $ walletSwitchToForkT indCtxt accountId n bs'
+            withConfig $ walletSwitchToForkT indCtxt accountId tip n bs'
             go ic' hist'' w' es
+
+    blockContext :: IntCheckpoint -> DB.BlockContext
+    blockContext IntCheckpoint{..} = DB.BlockContext
+        { _bcSlotId   = InDb icSlotId
+        , _bcHash     = InDb (headerHash icBlockHeader)
+        , _bcPrevMain = InDb <$> icPrevMainHH
+        }
 
     int' :: Interpret h a
          => History
@@ -277,7 +287,7 @@ equivalentT useWW activeWallet esk = \mkWallet w ->
                       -> TranslateT EquivalenceViolation m ()
     walletApplyBlockT ctxt accountId block = do
         -- We assume the wallet is not behind
-        Right () <- liftIO $ Kernel.applyBlock passiveWallet (fromRawResolvedBlock block)
+        liftIO $ Kernel.applyBlock passiveWallet (fromRawResolvedBlock block)
         checkWalletState ctxt accountId
 
     walletNewPendingT :: InductiveCtxt h
@@ -300,12 +310,13 @@ equivalentT useWW activeWallet esk = \mkWallet w ->
 
     walletSwitchToForkT :: InductiveCtxt h
                         -> HD.HdAccountId
+                        -> DB.BlockContext
                         -> Int
                         -> OldestFirst [] RawResolvedBlock
                         -> TranslateT EquivalenceViolation m ()
-    walletSwitchToForkT ctxt accountId n bs = do
+    walletSwitchToForkT ctxt accountId tip n bs = do
         -- We assume the wallet is not in restoration mode
-        Right () <- liftIO $ Kernel.switchToFork passiveWallet n (map fromRawResolvedBlock (toList bs))
+        Right () <- liftIO $ Kernel.switchToFork passiveWallet tip n (map fromRawResolvedBlock (toList bs))
         checkWalletState ctxt accountId
 
     checkWalletState :: InductiveCtxt h

@@ -4,6 +4,7 @@ module Test.Spec.WalletWorker (
 
 import           Universum
 
+import           Data.Coerce
 import           Formatting (bprint, shown, (%))
 import qualified Formatting.Buildable
 import           Pos.Core.Chrono
@@ -98,14 +99,17 @@ data StackResult = StackResult
 stackOps :: Actions.WalletActionInterp (State Stack) Int
 stackOps = Actions.WalletActionInterp
     { Actions.applyBlocks  = mapM_ push
-    , Actions.switchToFork = \n bs -> do
-          replicateM_ n pop
-          mapM_ push bs
+    , Actions.switchToFork = \tip n bs -> do
+          top <- peek
+          when (Just tip == top) $ do
+              replicateM_ n pop
+              mapM_ push bs
     , Actions.emit         = const (return ())
     }
   where
     push = interpStackOp . Push
     pop  = interpStackOp Pop
+    peek = (listToMaybe . coerce) <$> get
 
 data StackOp = Push Int | Pop
 newtype Stack = Stack [Int]
